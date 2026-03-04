@@ -35,6 +35,107 @@ class XHSKeywordSpider:
         if random.random() < 0.5:
             for _ in range(random.randint(2, 5)):
                 time.sleep(random.uniform(0.1, 0.3))
+        
+        # 点击筛选按钮并选择最新
+        print("正在进行筛选操作...")
+        try:
+            # 参考my_xhs_ai.py的筛选方法，使用XPath选择器
+            print("使用XPath选择器查找筛选按钮...")
+            try:
+                # 定位筛选按钮
+                shaixuan = self.page.ele('xpath://div[@class="search-layout__top"]//span[text()="筛选"]', timeout=5)
+                if shaixuan:
+                    print("找到筛选按钮")
+                    # 悬浮到筛选按钮上
+                    shaixuan.hover()
+                    print("已悬浮到筛选按钮")
+                    time.sleep(2)  # 等待悬浮框出现
+                    
+                    # 定位最新选项
+                    latest_button = self.page.ele('xpath://div[@class="search-layout__top"]//span[text()="最新"]', timeout=3)
+                    if latest_button:
+                        print("找到'最新'选项")
+                        # 点击最新选项
+                        latest_button.click()
+                        print("已点击'最新'选项")
+                        # 等待页面刷新
+                        time.sleep(4)
+                        print("已选择'最新'筛选选项并等待页面刷新")
+                    else:
+                        print("未找到'最新'选项")
+                else:
+                    print("未找到筛选按钮")
+            except Exception as e:
+                print(f"XPath选择器操作失败: {e}")
+                
+                # 备选方案：尝试使用CSS选择器
+                print("尝试使用CSS选择器...")
+                try:
+                    # 尝试多种筛选按钮选择器
+                    filter_selectors = [
+                        'css:.filter',
+                        'css:.sort',
+                        'css:.filter-btn',
+                        'css:.sort-btn',
+                        'css:[class*="filter"]',
+                        'css:[class*="sort"]',
+                        'css:button:contains(筛选)',
+                        'css:button:contains(排序)',
+                        'css:div[class*="filter"]',
+                        'css:div[class*="sort"]',
+                    ]
+                    
+                    filter_button = None
+                    for selector in filter_selectors:
+                        try:
+                            button = self.page.ele(selector, timeout=2)
+                            if button:
+                                filter_button = button
+                                print(f"找到筛选按钮: {selector}")
+                                break
+                        except:
+                            continue
+                    
+                    if filter_button:
+                        filter_button.hover()
+                        print("已悬浮到筛选按钮")
+                        time.sleep(3)
+                        
+                        # 尝试多种最新选项选择器
+                        latest_selectors = [
+                            'css:.filter-item:contains(最新)',
+                            'css:.sort-item:contains(最新)',
+                            'css:.option:contains(最新)',
+                            'css:li:contains(最新)',
+                            'css:div:contains(最新)',
+                            'css:span:contains(最新)',
+                        ]
+                        
+                        latest_option = None
+                        for selector in latest_selectors:
+                            try:
+                                option = self.page.ele(selector, timeout=3)
+                                if option:
+                                    latest_option = option
+                                    print(f"找到'最新'选项: {selector}")
+                                    break
+                            except:
+                                continue
+                        
+                        if latest_option:
+                            latest_option.click()
+                            print("已点击'最新'选项")
+                            time.sleep(4)
+                            print("已选择'最新'筛选选项并等待页面刷新")
+                        else:
+                            print("未找到'最新'选项")
+                    else:
+                        print("未找到筛选按钮")
+                except Exception as e:
+                    print(f"CSS选择器操作也失败: {e}")
+        except Exception as e:
+            print(f"筛选操作失败: {e}")
+            pass
 
     def scroll_page(self, scroll_times=20, scroll_pause=3):
         """滚动页面加载更多笔记"""
