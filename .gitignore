@@ -21,17 +21,19 @@ wheels/
 *.egg
 
 # Virtual Environment
-venv/
+.venv/
 env/
 ENV/
 
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
 
 # Output files
+data/
 *.xlsx
 *.json
 *.txt
