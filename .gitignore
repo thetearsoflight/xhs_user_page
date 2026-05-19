@@ -34,6 +34,7 @@ ENV/
 
 # Output files
 data/
+resources/
 *.xlsx
 *.json
 *.txt

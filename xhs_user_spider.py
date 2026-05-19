@@ -385,7 +385,7 @@ class XHSSpider:
         print("浏览器已关闭")
 
 
-def load_urls_from_file(filename='urls.txt'):
+def load_urls_from_file(filename='resources/urls.txt'):
     """从文件加载URL列表"""
     urls = []
     try:
@@ -537,7 +537,7 @@ def main():
     # 询问模式
     print("请选择运行模式:")
     print("1. 单博主模式")
-    print("2. 批量模式(从urls.txt读取)")
+    print("2. 批量模式(从resources/urls.txt读取)")
     mode = input("请输入选项(1或2，默认1): ").strip() or "1"
 
     if mode == "1":
@@ -602,14 +602,14 @@ def run_batch_mode():
     print("\n--- 批量模式 ---\n")
 
     # 加载URL列表
-    urls = load_urls_from_file('urls.txt')
+    urls = load_urls_from_file('resources/urls.txt')
 
     if not urls:
-        print("urls.txt 文件为空或不存在，请先添加博主URL")
+        print("resources/urls.txt 文件为空或不存在，请先添加博主URL")
         print("格式: 每行一个URL，以#开头的行为注释")
         return
 
-    print(f"从 urls.txt 加载了 {len(urls)} 个博主URL")
+    print(f"从 resources/urls.txt 加载了 {len(urls)} 个博主URL")
 
     # 设置目标数量
     target_input = input("请输入每个博主需要采集的达标笔记数量(点赞>90，默认30篇): ").strip()
