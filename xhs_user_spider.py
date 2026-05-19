@@ -14,6 +14,7 @@ class XHSSpider:
         self.page = ChromiumPage()
         self.notes_data = []
         self.user_name = ''
+        self.like_threshold = 200
 
     def parse_user_id_from_url(self, url):
         """从小红书主页URL中提取用户ID"""
@@ -199,8 +200,8 @@ class XHSSpider:
             return None
 
     def count_qualified_notes(self):
-        """统计点赞>90的笔记数量"""
-        return sum(1 for note in self.notes_data if self.parse_likes(note.get('likes', '0')) > 90)
+        """统计点赞>like_threshold的笔记数量"""
+        return sum(1 for note in self.notes_data if self.parse_likes(note.get('likes', '0')) > self.like_threshold)
 
     def crawl_user_notes(self, user_url, target_count=50):
         """爬取用户主页的笔记，直到达到目标数量"""
@@ -281,7 +282,7 @@ class XHSSpider:
         print("\n提取到的笔记数据预览（前10篇）：")
         for i, note in enumerate(self.notes_data[:10], 1):
             parsed_likes = self.parse_likes(note['likes'])
-            qualified = "✓" if parsed_likes > 90 else "✗"
+            qualified = "✓" if parsed_likes > 200 else "✗"
             print(f"  {i}. [{qualified}] 点赞: {note['likes']:>8} -> {parsed_likes:>6} | {note['title'][:25]}...")
         if len(self.notes_data) > 10:
             print(f"  ... 还有 {len(self.notes_data) - 10} 篇笔记")
@@ -312,13 +313,13 @@ class XHSSpider:
         """保存数据到Excel文件"""
         filtered_notes = [
             note for note in self.notes_data
-            if self.parse_likes(note.get('likes', '0')) > 90
+            if self.parse_likes(note.get('likes', '0')) > self.like_threshold
         ]
 
-        print(f"原始笔记数: {len(self.notes_data)}, 筛选后(点赞>90): {len(filtered_notes)}")
+        print(f"原始笔记数: {len(self.notes_data)}, 筛选后(点赞>{self.like_threshold}): {len(filtered_notes)}")
 
         if not filtered_notes:
-            print("没有点赞数大于90的笔记，不生成Excel文件")
+            print("没有点赞数大于200的笔记，不生成Excel文件")
             return None
 
         # 创建data目录（如果不存在）
@@ -385,294 +386,61 @@ class XHSSpider:
         print("浏览器已关闭")
 
 
-def load_urls_from_file(filename='resources/urls.txt'):
-    """从文件加载URL列表"""
-    urls = []
-    try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    urls.append(line)
-    except FileNotFoundError:
-        print(f"文件 {filename} 不存在")
-    return urls
-
-
-def save_progress(progress_file, completed_urls):
-    """保存进度到文件"""
-    with open(progress_file, 'w', encoding='utf-8') as f:
-        for url in completed_urls:
-            f.write(url + '\n')
-
-
-def load_progress(progress_file):
-    """加载已完成的URL列表"""
-    completed = set()
-    try:
-        with open(progress_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    completed.add(line)
-    except FileNotFoundError:
-        pass
-    return completed
-
-
-def crawl_single_blogger(spider, url, target_count, blogger_index, total_count):
-    """爬取单个博主"""
-    print("\n" + "=" * 60)
-    print(f"正在处理第 {blogger_index}/{total_count} 个博主")
-    print(f"URL: {url}")
-    print("=" * 60)
-
-    try:
-        notes = spider.crawl_user_notes(url, target_count=target_count)
-
-        if notes:
-            excel_file = spider.save_to_excel()
-            qualified_count = spider.count_qualified_notes()
-
-            print()
-            print("-" * 60)
-            print(f"博主 {spider.user_name} 处理完成")
-            print(f"总笔记: {len(notes)} 篇，达标: {qualified_count} 篇")
-            if excel_file:
-                print(f"保存文件: {excel_file}")
-            print("-" * 60)
-
-            return {
-                'url': url,
-                'name': spider.user_name,
-                'total': len(notes),
-                'qualified': qualified_count,
-                'file': excel_file,
-                'success': True
-            }
-        else:
-            print(f"未从该博主获取到笔记数据")
-            return {
-                'url': url,
-                'name': '未知',
-                'total': 0,
-                'qualified': 0,
-                'file': None,
-                'success': False
-            }
-
-    except Exception as e:
-        print(f"处理博主时出错: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            'url': url,
-            'name': '错误',
-            'total': 0,
-            'qualified': 0,
-            'file': None,
-            'success': False
-        }
-
-
-def generate_summary_report(results, target_count):
-    """生成汇总报告"""
-    print("\n" + "=" * 60)
-    print("批量爬取汇总报告")
-    print("=" * 60)
-
-    total_bloggers = len(results)
-    success_bloggers = sum(1 for r in results if r['success'])
-    total_notes = sum(r['total'] for r in results)
-    total_qualified = sum(r['qualified'] for r in results)
-
-    print(f"\n总体统计:")
-    print(f"  博主总数: {total_bloggers}")
-    print(f"  成功爬取: {success_bloggers}")
-    print(f"  失败/无数据: {total_bloggers - success_bloggers}")
-    print(f"  总笔记数: {total_notes}")
-    print(f"  总达标数(点赞>{target_count}): {total_qualified}")
-
-    print(f"\n各博主详情:")
-    for i, result in enumerate(results, 1):
-        status = "✓" if result['success'] else "✗"
-        print(f"  {i}. [{status}] {result['name'][:15]:<15} | 达标: {result['qualified']:>3}/{target_count} | 总笔记: {result['total']:>3}")
-
-    # 保存汇总报告到文本文件（data目录）
-    data_dir = 'data'
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
-
-    report_file = os.path.join(data_dir, f'batch_report_{time.strftime("%Y%m%d_%H%M%S")}.txt')
-    with open(report_file, 'w', encoding='utf-8') as f:
-        f.write("=" * 60 + "\n")
-        f.write("批量爬取汇总报告\n")
-        f.write("=" * 60 + "\n\n")
-        f.write(f"总体统计:\n")
-        f.write(f"  博主总数: {total_bloggers}\n")
-        f.write(f"  成功爬取: {success_bloggers}\n")
-        f.write(f"  失败/无数据: {total_bloggers - success_bloggers}\n")
-        f.write(f"  总笔记数: {total_notes}\n")
-        f.write(f"  总达标数(点赞>90): {total_qualified}\n\n")
-        f.write("各博主详情:\n")
-        for i, result in enumerate(results, 1):
-            status = "成功" if result['success'] else "失败"
-            f.write(f"  {i}. [{status}] {result['name']}\n")
-            f.write(f"      URL: {result['url']}\n")
-            f.write(f"      达标: {result['qualified']}/{target_count}, 总笔记: {result['total']}\n")
-            if result['file']:
-                f.write(f"      文件: {result['file']}\n")
-            f.write("\n")
-
-    print(f"\n汇总报告已保存到: {report_file}")
-    print("=" * 60)
-
-
 def main():
     print("=" * 60)
-    print("小红书博主笔记爬虫 - 批量模式")
+    print("小红书博主笔记爬虫 - 单博主模式")
     print("=" * 60)
     print()
 
-    # 询问模式
-    print("请选择运行模式:")
-    print("1. 单博主模式")
-    print("2. 批量模式(从resources/urls.txt读取)")
-    mode = input("请输入选项(1或2，默认1): ").strip() or "1"
-
-    if mode == "1":
-        run_single_mode()
-    else:
-        run_batch_mode()
-
-
-def run_single_mode():
-    """单博主模式"""
-    print("\n--- 单博主模式 ---\n")
-
-    user_url = input("请输入小红书博主主页URL: ").strip()
-
+    # 获取用户输入
+    user_url = input("请输入博主主页URL: ").strip()
     if not user_url:
         print("URL不能为空！")
         return
 
-    if 'xiaohongshu.com' not in user_url:
-        print("请输入有效的小红书URL！")
-        return
-
-    target_input = input("请输入需要采集的达标笔记数量(点赞>90，默认50篇): ").strip()
-    target_count = int(target_input) if target_input.isdigit() else 50
+    target_count = int(input("请输入目标达标笔记数量（默认50）: ").strip() or "50")
+    like_threshold = int(input("请输入点赞数阈值（默认200）: ").strip() or "200")
 
     print()
     print("正在启动爬虫...")
-    print(f"目标: 采集 {target_count} 篇点赞>90的笔记")
-    print("注意: 请确保已登录小红书账号，否则可能无法获取完整数据")
+    print(f"博主URL: {user_url}")
+    print(f"目标: 采集 {target_count} 篇点赞>{like_threshold}的笔记")
+    print("注意: 请确保已登录小红书账号")
     print()
 
     spider = XHSSpider()
+    spider.like_threshold = like_threshold
 
     try:
         notes = spider.crawl_user_notes(user_url, target_count=target_count)
 
         if notes:
             excel_file = spider.save_to_excel()
+            qualified_count = spider.count_qualified_notes()
 
             print()
             print("=" * 60)
             print("爬取完成！")
             print(f"博主: {spider.user_name}")
             print(f"共获取 {len(notes)} 篇笔记")
-            print(f"数据已保存到: {excel_file}")
+            print(f"达标(点赞>{like_threshold}): {qualified_count} 篇")
+            if excel_file:
+                print(f"Excel数据已保存到: {excel_file}")
             print("=" * 60)
         else:
             print("未获取到任何笔记数据")
+            print("可能原因：")
+            print("  1. 未登录小红书账号")
+            print("  2. 网络问题")
+
+        spider.close()
 
     except Exception as e:
         print(f"爬取过程中出错: {e}")
         import traceback
         traceback.print_exc()
-
-    finally:
         input("\n按回车键关闭浏览器...")
         spider.close()
-
-
-def run_batch_mode():
-    """批量模式"""
-    print("\n--- 批量模式 ---\n")
-
-    # 加载URL列表
-    urls = load_urls_from_file('resources/urls.txt')
-
-    if not urls:
-        print("resources/urls.txt 文件为空或不存在，请先添加博主URL")
-        print("格式: 每行一个URL，以#开头的行为注释")
-        return
-
-    print(f"从 resources/urls.txt 加载了 {len(urls)} 个博主URL")
-
-    # 设置目标数量
-    target_input = input("请输入每个博主需要采集的达标笔记数量(点赞>90，默认30篇): ").strip()
-    target_count = int(target_input) if target_input.isdigit() else 30
-
-    # 加载进度
-    progress_file = 'progress.txt'
-    completed_urls = load_progress(progress_file)
-
-    if completed_urls:
-        print(f"发现已完成的进度，共 {len(completed_urls)} 个博主")
-        skip_completed = input("是否跳过已完成的博主?(y/n，默认y): ").strip().lower() != 'n'
-    else:
-        skip_completed = False
-
-    # 过滤已完成的URL
-    if skip_completed:
-        urls = [url for url in urls if url not in completed_urls]
-        print(f"剩余待处理博主: {len(urls)} 个")
-
-    if not urls:
-        print("所有博主已处理完毕！")
-        return
-
-    print()
-    print("正在启动批量爬虫...")
-    print(f"每个博主目标: {target_count} 篇点赞>90的笔记")
-    print("注意: 请确保已登录小红书账号")
-    print()
-
-    # 创建爬虫实例
-    spider = XHSSpider()
-    results = []
-
-    try:
-        for i, url in enumerate(urls, 1):
-            result = crawl_single_blogger(spider, url, target_count, i, len(urls))
-            results.append(result)
-
-            # 保存进度
-            if result['success']:
-                completed_urls.add(url)
-                save_progress(progress_file, completed_urls)
-
-            # 询问是否继续（每完成3个博主询问一次）
-            if i < len(urls) and i % 3 == 0:
-                cont = input(f"\n已完成 {i}/{len(urls)} 个博主，是否继续?(y/n，默认y): ").strip().lower()
-                if cont == 'n':
-                    print("用户中断批量处理")
-                    break
-
-        # 生成汇总报告
-        generate_summary_report(results, target_count)
-
-    except Exception as e:
-        print(f"批量处理过程中出错: {e}")
-        import traceback
-        traceback.print_exc()
-
-    finally:
-        input("\n按回车键关闭浏览器...")
-        spider.close()
-
 
 if __name__ == '__main__':
     main()

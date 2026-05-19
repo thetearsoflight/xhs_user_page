@@ -79,7 +79,7 @@ def save_merged_excel(notes, like_threshold, output_dir='data'):
         return None
 
     os.makedirs(output_dir, exist_ok=True)
-    filename = os.path.join(output_dir, f'汇总_{time.strftime("%Y%m%d_%H%M%S")}.xlsx')
+    filename = os.path.join(output_dir, f'关键词汇总_{time.strftime("%Y%m%d_%H%M%S")}.xlsx')
 
     wb = Workbook()
     ws = wb.active
