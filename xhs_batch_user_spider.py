@@ -6,9 +6,62 @@ import time
 import random
 import argparse
 import json
+import sqlite3
 
 
 PROGRESS_FILE = 'data/batch_user_progress.json'
+DB_DIR = 'db'
+USER_DB_FILE = os.path.join(DB_DIR, 'user_notes_history.db')
+
+
+def init_db():
+    os.makedirs(DB_DIR, exist_ok=True)
+    conn = sqlite3.connect(USER_DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_notes (
+            note_id TEXT PRIMARY KEY,
+            title TEXT,
+            nickname TEXT,
+            blogger_url TEXT,
+            likes TEXT,
+            likes_num INTEGER,
+            note_url TEXT,
+            crawl_time REAL
+        )
+    ''')
+    conn.commit()
+    return conn
+
+
+def get_existing_note_ids(conn):
+    cursor = conn.cursor()
+    cursor.execute('SELECT note_id FROM user_notes')
+    return set(row[0] for row in cursor.fetchall())
+
+
+def save_notes_to_db(conn, notes, blogger_url, spider):
+    cursor = conn.cursor()
+    crawl_time = time.time()
+    for note in notes:
+        note_id = note.get('note_id', '')
+        if not note_id:
+            continue
+        cursor.execute('''
+            INSERT OR IGNORE INTO user_notes 
+            (note_id, title, nickname, blogger_url, likes, likes_num, note_url, crawl_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            note_id,
+            note.get('title', ''),
+            note.get('nickname', ''),
+            blogger_url,
+            note.get('likes', '0'),
+            spider.parse_likes(note.get('likes', '0')),
+            note.get('note_url', ''),
+            crawl_time
+        ))
+    conn.commit()
 
 
 def load_urls(filename='resources/urls.txt'):
@@ -107,7 +160,7 @@ def save_monitor_excel(all_qualified_notes, like_threshold, output_dir='data'):
     return filename
 
 
-def crawl_single_blogger_check(spider, url, check_count, like_threshold, blogger_index, total_count):
+def crawl_single_blogger_check(spider, url, check_count, like_threshold, existing_ids, blogger_index, total_count):
     print("\n" + "=" * 60)
     print(f"正在处理第 {blogger_index}/{total_count} 个博主")
     print(f"URL: {url}")
@@ -168,8 +221,18 @@ def crawl_single_blogger_check(spider, url, check_count, like_threshold, blogger
 
         notes_data = spider.notes_data[:check_count]
         
-        qualified_notes = [note for note in notes_data if spider.parse_likes(note.get('likes', '0')) > like_threshold]
+        # 去重：过滤历史笔记
+        new_notes = [n for n in notes_data if n.get('note_id') not in existing_ids]
+        dup_count = len(notes_data) - len(new_notes)
+        if dup_count > 0:
+            print(f"去重: 过滤掉 {dup_count} 篇历史笔记")
+        
+        # 只保留点赞数达标的笔记
+        qualified_notes = [note for note in new_notes if spider.parse_likes(note.get('likes', '0')) > like_threshold]
         qualified_count = len(qualified_notes)
+        unqualified_count = len(new_notes) - qualified_count
+        if unqualified_count > 0:
+            print(f"筛选: 过滤掉 {unqualified_count} 篇点赞<{like_threshold}的笔记，不存入数据库")
 
         for note in qualified_notes:
             note['nickname'] = spider.user_name
@@ -177,7 +240,7 @@ def crawl_single_blogger_check(spider, url, check_count, like_threshold, blogger
         print()
         print("-" * 60)
         print(f"博主 {spider.user_name} 检查完成")
-        print(f"检查笔记: {len(notes_data)} 篇")
+        print(f"检查笔记: {len(notes_data)} 篇，新增: {len(new_notes)} 篇")
         print(f"达标笔记(点赞>{like_threshold}): {qualified_count} 篇")
         
         if qualified_count > 0:
@@ -193,6 +256,7 @@ def crawl_single_blogger_check(spider, url, check_count, like_threshold, blogger
             'url': url,
             'name': spider.user_name,
             'total': len(notes_data),
+            'new': len(new_notes),
             'qualified': qualified_count,
             'qualified_notes': qualified_notes,
             'file': None,
@@ -382,10 +446,11 @@ def main():
     parser = argparse.ArgumentParser(description='小红书批量博主爬虫')
     parser.add_argument('-f', '--file', type=str, default='resources/urls.txt', help='博主URL文件路径，默认resources/urls.txt')
     parser.add_argument('-n', '--num', type=int, default=50, help='每个博主采集的达标笔记数量，默认50篇')
-    parser.add_argument('-l', '--likes', type=int, default=200, help='点赞数阈值，默认200')
-    parser.add_argument('-c', '--check', type=int, default=40, help='每个博主只检查前N篇笔记（用于监控同行选题），默认40篇')
+    parser.add_argument('-l', '--likes', type=int, default=100, help='点赞数阈值，默认100')
+    parser.add_argument('-c', '--check', type=int, default=20, help='每个博主只检查前N篇笔记（用于监控同行选题），默认20篇')
     parser.add_argument('--restart', action='store_true', help='忽略进度文件，从头开始')
-    parser.add_argument('--gap', type=int, default=10, help='博主间间隔秒数，默认10秒')
+    parser.add_argument('--gap', type=int, default=60, help='博主间间隔秒数，默认60秒')
+    parser.add_argument('--clear-db', action='store_true', help='清空历史笔记数据库，从头开始去重')
     args = parser.parse_args()
 
     urls = load_urls(args.file)
@@ -431,6 +496,16 @@ def main():
     results = []
     all_qualified_notes = []
 
+    # 初始化数据库，加载历史笔记ID用于去重
+    conn = init_db()
+    if args.clear_db:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM user_notes')
+        conn.commit()
+        print("已清空历史笔记数据库")
+    existing_ids = get_existing_note_ids(conn)
+    print(f"历史笔记库已加载: {len(existing_ids)} 篇")
+
     try:
         for i, url in enumerate(remaining, 1):
             print(f"\n{'=' * 60}")
@@ -447,10 +522,15 @@ def main():
             crawl_success = False
 
             try:
-                result = crawl_single_blogger_check(spider, url, args.check, args.likes, i, len(remaining))
+                result = crawl_single_blogger_check(spider, url, args.check, args.likes, existing_ids, i, len(remaining))
                 results.append(result)
                 crawl_success = result['success']
                 
+                # 将新笔记存入数据库（只保存点赞达标的笔记）
+                if result.get('qualified_notes'):
+                    save_notes_to_db(conn, result['qualified_notes'], url, spider)
+                    existing_ids.update(n.get('note_id', '') for n in result['qualified_notes'] if n.get('note_id'))
+
                 if result.get('qualified_notes'):
                     all_qualified_notes.extend(result['qualified_notes'])
 
@@ -479,14 +559,16 @@ def main():
 
         print(f"\n各博主统计:")
         total_all = 0
+        new_all = 0
         qualified_all = 0
         for r in results:
             status = "✓" if r['success'] else "✗"
-            print(f"  [{status}] {r['name'][:15]:<15} | 总计: {r['total']:>4} | 达标: {r['qualified']:>4}")
+            print(f"  [{status}] {r['name'][:15]:<15} | 总计: {r['total']:>4} | 新增: {r.get('new', 0):>4} | 达标: {r['qualified']:>4}")
             total_all += r['total']
+            new_all += r.get('new', 0)
             qualified_all += r['qualified']
-        print(f"  {'─' * 45}")
-        print(f"  {'合计':<15} | 总计: {total_all:>4} | 达标: {qualified_all:>4}")
+        print(f"  {'─' * 60}")
+        print(f"  {'合计':<15} | 总计: {total_all:>4} | 新增: {new_all:>4} | 达标: {qualified_all:>4}")
 
         generate_summary_report(results, target_count, check_mode=True, check_count=args.check)
 
@@ -508,11 +590,13 @@ def main():
 
         clear_progress()
 
+        conn.close()
         spider.close()
 
     except KeyboardInterrupt:
         print(f"\n\n用户中断！进度已保存，下次运行将从断点继续")
         print(f"已完成: {len(progress['completed_urls'])}/{len(urls)} 个博主")
+        conn.close()
         spider.close()
 
     except Exception as e:
@@ -520,6 +604,7 @@ def main():
         import traceback
         traceback.print_exc()
         print(f"进度已保存，下次运行将从断点继续")
+        conn.close()
         input("\n按回车键关闭浏览器...")
         spider.close()
 

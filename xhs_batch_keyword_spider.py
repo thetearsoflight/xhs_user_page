@@ -6,9 +6,61 @@ import time
 import random
 import argparse
 import json
+import sqlite3
 
 
 PROGRESS_FILE = 'data/batch_progress.json'
+DB_DIR = 'db'
+DB_FILE = os.path.join(DB_DIR, 'notes_history.db')
+
+
+def init_db():
+    os.makedirs(DB_DIR, exist_ok=True)
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS notes (
+            note_id TEXT PRIMARY KEY,
+            title TEXT,
+            nickname TEXT,
+            keyword TEXT,
+            note_type TEXT,
+            likes TEXT,
+            likes_num INTEGER,
+            note_url TEXT,
+            crawl_time REAL
+        )
+    ''')
+    conn.commit()
+    return conn
+
+
+def get_existing_note_ids(conn):
+    cursor = conn.cursor()
+    cursor.execute('SELECT note_id FROM notes')
+    return set(row[0] for row in cursor.fetchall())
+
+
+def save_notes_to_db(conn, notes, keyword):
+    cursor = conn.cursor()
+    crawl_time = time.time()
+    for note in notes:
+        cursor.execute('''
+            INSERT OR IGNORE INTO notes 
+            (note_id, title, nickname, keyword, note_type, likes, likes_num, note_url, crawl_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            note.get('note_id', ''),
+            note.get('title', ''),
+            note.get('nickname', ''),
+            keyword,
+            note.get('note_type', ''),
+            note.get('likes', '0'),
+            note.get('likes_num', 0),
+            note.get('note_url', ''),
+            crawl_time
+        ))
+    conn.commit()
 
 
 def load_keywords(filename='keywords.txt'):
@@ -85,7 +137,7 @@ def save_merged_excel(notes, like_threshold, output_dir='data'):
     ws = wb.active
     ws.title = "汇总数据"
 
-    headers = ['序号', '搜索关键词', '标题', '作者', '类型', '点赞数', '详情页URL']
+    headers = ['序号', '标题', '作者', '搜索关键词', '类型', '点赞数', '详情页URL']
     header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
     header_font = Font(bold=True, color='FFFFFF', size=12)
     header_alignment = Alignment(horizontal='center', vertical='center')
@@ -107,9 +159,9 @@ def save_merged_excel(notes, like_threshold, output_dir='data'):
 
     for row, note in enumerate(unique_notes, 2):
         ws.cell(row=row, column=1, value=row - 1).border = thin_border
-        ws.cell(row=row, column=2, value=note.get('keyword', '')).border = thin_border
-        ws.cell(row=row, column=3, value=note.get('title', '')).border = thin_border
-        ws.cell(row=row, column=4, value=note.get('nickname', '')).border = thin_border
+        ws.cell(row=row, column=2, value=note.get('title', '')).border = thin_border
+        ws.cell(row=row, column=3, value=note.get('nickname', '')).border = thin_border
+        ws.cell(row=row, column=4, value=note.get('keyword', '')).border = thin_border
 
         note_type = note.get('note_type', '')
         type_display = '视频' if note_type == 'video' else '图文'
@@ -129,8 +181,8 @@ def save_merged_excel(notes, like_threshold, output_dir='data'):
         ws.cell(row=row, column=6).alignment = Alignment(horizontal='center')
 
     ws.column_dimensions['A'].width = 8
-    ws.column_dimensions['B'].width = 15
-    ws.column_dimensions['C'].width = 50
+    ws.column_dimensions['B'].width = 50
+    ws.column_dimensions['C'].width = 15
     ws.column_dimensions['D'].width = 15
     ws.column_dimensions['E'].width = 8
     ws.column_dimensions['F'].width = 12
@@ -151,11 +203,12 @@ def main():
 
     parser = argparse.ArgumentParser(description='小红书批量关键词爬虫')
     parser.add_argument('-f', '--file', type=str, default='resources/keywords.txt', help='关键词库文件路径，默认resources/keywords.txt')
-    parser.add_argument('-n', '--num', type=int, default=50, help='每个关键词采集的达标笔记数量，默认50篇')
+    parser.add_argument('-n', '--num', type=int, default=30, help='每个关键词采集的达标笔记数量，默认30篇')
     parser.add_argument('-l', '--likes', type=int, default=200, help='点赞数阈值，默认200')
     parser.add_argument('--no-sort-time', action='store_true', help='不按最新排序（默认按最新排序）')
     parser.add_argument('--restart', action='store_true', help='忽略进度文件，从头开始')
     parser.add_argument('--timeout', type=int, default=300, help='单个关键词超时秒数，默认300秒')
+    parser.add_argument('--clear-db', action='store_true', help='清空历史笔记数据库，从头开始去重')
     args = parser.parse_args()
 
     keywords = load_keywords(args.file)
@@ -201,6 +254,16 @@ def main():
     spider.like_threshold = args.likes
     results = []
 
+    # 初始化数据库，加载历史笔记ID用于去重
+    conn = init_db()
+    if args.clear_db:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM notes')
+        conn.commit()
+        print("已清空历史笔记数据库")
+    existing_ids = get_existing_note_ids(conn)
+    print(f"历史笔记库已加载: {len(existing_ids)} 篇")
+
     try:
         for i, keyword in enumerate(remaining, 1):
             print(f"\n{'=' * 60}")
@@ -208,7 +271,7 @@ def main():
             print(f"{'=' * 60}")
 
             if i > 1:
-                gap = random.uniform(8, 20)
+                gap = random.uniform(60, 120)
                 print(f"关键词间隔等待 {gap:.1f} 秒（防封禁）...")
                 time.sleep(gap)
 
@@ -220,7 +283,7 @@ def main():
             crawl_start = time.time()
 
             try:
-                notes = spider.crawl_keyword_notes(keyword, target_count=target_count, sort_by_time=sort_by_time)
+                notes = spider.crawl_keyword_notes(keyword, target_count=target_count, sort_by_time=sort_by_time, max_scrolls=25)
                 elapsed = time.time() - crawl_start
 
                 if elapsed > args.timeout:
@@ -228,17 +291,36 @@ def main():
 
                 for note in notes:
                     note['keyword'] = keyword
-                all_notes.extend(notes)
 
-                qualified = spider.count_qualified_notes()
+                # 去重：只保留本次新爬取的笔记
+                new_notes = [n for n in notes if n['note_id'] not in existing_ids]
+                dup_count = len(notes) - len(new_notes)
+                if dup_count > 0:
+                    print(f"去重: 过滤掉 {dup_count} 篇历史笔记，本次新增 {len(new_notes)} 篇")
+
+                # 只保留点赞数达标的笔记
+                qualified_notes = [n for n in new_notes if n.get('likes_num', 0) > args.likes]
+                unqualified_count = len(new_notes) - len(qualified_notes)
+                if unqualified_count > 0:
+                    print(f"筛选: 过滤掉 {unqualified_count} 篇点赞<={args.likes}的笔记，不存入数据库")
+
+                # 将达标笔记存入数据库
+                if qualified_notes:
+                    save_notes_to_db(conn, qualified_notes, keyword)
+                    existing_ids.update(n['note_id'] for n in qualified_notes)
+
+                all_notes.extend(qualified_notes)
+
+                qualified = len(qualified_notes)
                 results.append({
                     'keyword': keyword,
                     'total': len(notes),
+                    'new': len(new_notes),
                     'qualified': qualified,
                     'success': True,
                 })
                 crawl_success = True
-                print(f"\n关键词 '{keyword}' 完成: 总计{len(notes)}篇，达标{qualified}篇，耗时{elapsed:.0f}秒")
+                print(f"\n关键词 '{keyword}' 完成: 总计{len(notes)}篇，新增{len(new_notes)}篇，达标{qualified}篇，耗时{elapsed:.0f}秒")
 
             except Exception as e:
                 print(f"关键词 '{keyword}' 爬取出错: {e}")
@@ -263,14 +345,16 @@ def main():
 
         print(f"\n各关键词统计:")
         total_all = 0
+        new_all = 0
         qualified_all = 0
         for r in results:
             status = "✓" if r['success'] else "✗"
-            print(f"  [{status}] {r['keyword']:<15} | 总计: {r['total']:>4} | 达标: {r['qualified']:>4}")
+            print(f"  [{status}] {r['keyword']:<15} | 总计: {r['total']:>4} | 新增: {r.get('new', 0):>4} | 达标: {r['qualified']:>4}")
             total_all += r['total']
+            new_all += r.get('new', 0)
             qualified_all += r['qualified']
-        print(f"  {'─' * 45}")
-        print(f"  {'本次合计':<15} | 总计: {total_all:>4} | 达标: {qualified_all:>4}")
+        print(f"  {'─' * 60}")
+        print(f"  {'本次合计':<15} | 总计: {total_all:>4} | 新增: {new_all:>4} | 达标: {qualified_all:>4}")
         print(f"  {'累计合计':<15} | 总计: {len(all_notes):>4}")
 
         if all_notes:
@@ -289,11 +373,13 @@ def main():
         else:
             print("\n未获取到任何笔记数据")
 
+        conn.close()
         spider.close()
 
     except KeyboardInterrupt:
         print(f"\n\n用户中断！进度已保存，下次运行将从断点继续")
         print(f"已完成: {len(progress['completed_keywords'])}/{len(keywords)} 个关键词")
+        conn.close()
         spider.close()
 
     except Exception as e:
@@ -301,6 +387,7 @@ def main():
         import traceback
         traceback.print_exc()
         print(f"进度已保存，下次运行将从断点继续")
+        conn.close()
         input("\n按回车键关闭浏览器...")
         spider.close()
 

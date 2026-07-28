@@ -12,6 +12,8 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 class XHSKeywordSpiderV2:
     API_KEYWORD = 'web/v1/search/notes'
+    # 可能的新接口路径
+    ALT_API_KEYWORDS = ['search/notes', 'search_notes', 'v1/search', 'v2/search', 'search_result']
 
     def __init__(self):
         self.page = ChromiumPage()
@@ -29,12 +31,41 @@ class XHSKeywordSpiderV2:
         print(f"正在搜索关键词: {keyword}")
         print(f"访问URL: {search_url}")
 
-        self.page.listen.start(self.API_KEYWORD)
+        # 先监听所有可能的搜索接口
+        self.page.listen.start(self.ALT_API_KEYWORDS + [self.API_KEYWORD])
         self.page.get(search_url)
 
         page_load_delay = random.uniform(2, 4)
         print(f"等待页面加载中... ({page_load_delay:.1f}秒)")
         time.sleep(page_load_delay)
+
+        # 调试：打印捕获到的所有数据包
+        debug_packets = []
+        while True:
+            pkt = self.page.listen.wait(timeout=3)
+            if not pkt:
+                break
+            debug_packets.append(pkt)
+            print(f"[DEBUG] 捕获到接口: {pkt.url}")
+
+        if debug_packets:
+            print(f"[DEBUG] 共捕获到 {len(debug_packets)} 个数据包")
+            # 找到包含笔记数据的包
+            for pkt in debug_packets:
+                try:
+                    body = pkt.response.body
+                    if body and isinstance(body, dict) and body.get('data', {}).get('items'):
+                        print(f"[DEBUG] 找到笔记数据接口: {pkt.url}")
+                        self.API_KEYWORD = pkt.url.split('?')[0]
+                        print(f"[DEBUG] 更新API监听路径为: {self.API_KEYWORD}")
+                except:
+                    pass
+        else:
+            print("[DEBUG] 未捕获到任何数据包，尝试继续使用原始接口路径")
+
+        # 停止监听，重新用正确的路径开始
+        self.page.listen.stop()
+        self.page.listen.start(self.API_KEYWORD)
 
         if sort_by_time:
             self._try_click_latest_filter()
@@ -133,7 +164,7 @@ class XHSKeywordSpiderV2:
             traceback.print_exc()
             return 0
 
-    def crawl_keyword_notes(self, keyword, target_count=50, sort_by_time=True):
+    def crawl_keyword_notes(self, keyword, target_count=50, sort_by_time=True, max_scrolls=80):
         self.search_by_keyword(keyword, sort_by_time)
 
         print("等待搜索接口返回数据...")
@@ -145,7 +176,6 @@ class XHSKeywordSpiderV2:
         qualified_count = self.count_qualified_notes()
         print(f"当前达标笔记数: {qualified_count}/{target_count}")
 
-        max_scrolls = 80
         no_new_count = 0
         max_no_new = 5
 
