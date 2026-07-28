@@ -3,6 +3,7 @@ import json
 import time
 import re
 import os
+import argparse
 from urllib.parse import urlencode, parse_qs, urlparse
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -203,12 +204,12 @@ class XHSSpider:
         """统计点赞>like_threshold的笔记数量"""
         return sum(1 for note in self.notes_data if self.parse_likes(note.get('likes', '0')) > self.like_threshold)
 
-    def crawl_user_notes(self, user_url, target_count=50):
-        """爬取用户主页的笔记，直到达到目标数量"""
+    def crawl_user_notes(self, user_url, target_count=50, crawl_all=False):
+        """爬取用户主页的笔记，直到达到目标数量或全部爬取完毕"""
         print(f"正在访问用户主页: {user_url}")
 
         self.page.get(user_url)
-        
+
         import random
 
         # 模拟人类浏览行为 - 页面加载后的随机等待
@@ -228,7 +229,10 @@ class XHSSpider:
         self._extract_notes_from_page()
 
         qualified_count = self.count_qualified_notes()
-        print(f"当前达标笔记数: {qualified_count}/{target_count}")
+        if crawl_all:
+            print(f"当前已提取笔记数: {len(self.notes_data)}，启用全部爬取模式")
+        else:
+            print(f"当前达标笔记数: {qualified_count}/{target_count}")
 
         # 如果还没达到目标，继续滚动提取
         max_scrolls = 50  # 最大滚动次数，防止无限循环
@@ -237,7 +241,7 @@ class XHSSpider:
         import random
 
         for scroll_idx in range(max_scrolls):
-            if qualified_count >= target_count:
+            if not crawl_all and qualified_count >= target_count:
                 print(f"\n已达到目标数量 {target_count} 篇达标笔记，停止爬取")
                 break
 
@@ -271,9 +275,12 @@ class XHSSpider:
                     break
             else:
                 no_new_count = 0
-                print(f"第 {scroll_idx + 1} 次滚动: 新增{new_notes}篇，达标{qualified_count}/{target_count}")
+                if crawl_all:
+                    print(f"第 {scroll_idx + 1} 次滚动: 新增{new_notes}篇，累计{len(self.notes_data)}篇")
+                else:
+                    print(f"第 {scroll_idx + 1} 次滚动: 新增{new_notes}篇，达标{qualified_count}/{target_count}")
 
-        if qualified_count < target_count:
+        if not crawl_all and qualified_count < target_count:
             print(f"\n博主笔记已爬取完毕，达标笔记仅{qualified_count}篇（目标{target_count}篇）")
 
         print(f"\n共提取到 {len(self.notes_data)} 篇笔记，其中达标{qualified_count}篇")
@@ -386,25 +393,56 @@ class XHSSpider:
         print("浏览器已关闭")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="小红书博主笔记爬虫 - 单博主模式")
+    parser.add_argument("--url", "-u", type=str, help="博主主页URL")
+    parser.add_argument("--target", "-t", type=int, default=50, help="目标达标笔记数量，默认50")
+    parser.add_argument("--all", "-a", action="store_true", help="爬取全部笔记")
+    parser.add_argument("--threshold", "-l", type=int, default=200, help="点赞数阈值，默认200")
+    return parser.parse_args()
+
+
 def main():
     print("=" * 60)
     print("小红书博主笔记爬虫 - 单博主模式")
     print("=" * 60)
     print()
 
-    # 获取用户输入
-    user_url = input("请输入博主主页URL: ").strip()
+    args = parse_args()
+
+    # 获取用户输入（命令行优先，未提供则交互式询问）
+    user_url = args.url.strip() if args.url else input("请输入博主主页URL: ").strip()
     if not user_url:
         print("URL不能为空！")
         return
 
-    target_count = int(input("请输入目标达标笔记数量（默认50）: ").strip() or "50")
-    like_threshold = int(input("请输入点赞数阈值（默认200）: ").strip() or "200")
+    if args.url:
+        # 提供了URL，进入非交互模式，使用命令行参数
+        crawl_all = args.all
+        target_count = 0 if crawl_all else args.target
+        like_threshold = args.threshold
+    else:
+        # 未提供URL，进入交互模式
+        if args.all:
+            crawl_all = True
+            target_count = 0
+        else:
+            target_input = input("请输入目标达标笔记数量（默认50，输入 0 或 all 表示爬取全部笔记）: ").strip().lower()
+            crawl_all = target_input in ('0', 'all', '全部')
+            target_count = 0 if crawl_all else int(target_input or "50")
+        like_threshold = args.threshold if args.threshold != 200 else int(input("请输入点赞数阈值（默认200）: ").strip() or "200")
+
+    # target_count 为 0 时统一视为全部爬取
+    if target_count == 0:
+        crawl_all = True
 
     print()
     print("正在启动爬虫...")
     print(f"博主URL: {user_url}")
-    print(f"目标: 采集 {target_count} 篇点赞>{like_threshold}的笔记")
+    if crawl_all:
+        print(f"模式: 爬取全部笔记，最终筛选点赞>{like_threshold}的笔记保存")
+    else:
+        print(f"目标: 采集 {target_count} 篇点赞>{like_threshold}的笔记")
     print("注意: 请确保已登录小红书账号")
     print()
 
@@ -412,7 +450,7 @@ def main():
     spider.like_threshold = like_threshold
 
     try:
-        notes = spider.crawl_user_notes(user_url, target_count=target_count)
+        notes = spider.crawl_user_notes(user_url, target_count=target_count, crawl_all=crawl_all)
 
         if notes:
             excel_file = spider.save_to_excel()

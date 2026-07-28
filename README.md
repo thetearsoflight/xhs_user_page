@@ -30,12 +30,28 @@ pip install DrissionPage openpyxl
 爬取单个博主的笔记并保存为Excel文件。
 
 ```bash
+# 交互式输入
 python xhs_user_spider.py
+
+# 命令行参数（非交互模式）
+python xhs_user_spider.py -u "https://www.xiaohongshu.com/user/profile/xxx"
+
+# 爬取全部笔记
+python xhs_user_spider.py -u "https://www.xiaohongshu.com/user/profile/xxx" -a
+
+# 自定义目标数量和点赞阈值
+python xhs_user_spider.py -u "https://www.xiaohongshu.com/user/profile/xxx" -t 100 -l 500
 ```
 
-运行后按提示输入：
+**参数说明：**
+- `-u, --url`：博主主页URL
+- `-t, --target`：目标达标笔记数量（默认50）
+- `-a, --all`：爬取该博主全部笔记
+- `-l, --threshold`：点赞数阈值（默认200）
+
+运行后按提示输入（未使用命令行参数时）：
 - 博主主页URL
-- 目标达标笔记数量（默认50）
+- 目标达标笔记数量（默认50，输入 `0` 或 `all` 表示爬取全部笔记）
 - 点赞数阈值（默认200）
 
 ### 2. 批量博主爬取（监控模式）
@@ -113,10 +129,13 @@ xhs_user_mainpage/
 ├── resources/
 │   ├── urls.txt                # 博主URL列表（每行一个URL）
 │   └── keywords.txt            # 关键词列表（每行一个关键词）
-└── data/                       # 输出目录
-    ├── 监控_YYYYMMDD_HHMMSS.xlsx  # 监控汇总文件
-    ├── 汇总_YYYYMMDD_HHMMSS.xlsx  # 关键词汇总文件
-    └── *_notes.xlsx            # 单博主/单关键词数据
+├── data/                       # 输出目录
+│   ├── 监控_YYYYMMDD_HHMMSS.xlsx  # 监控汇总文件
+│   ├── 汇总_YYYYMMDD_HHMMSS.xlsx  # 关键词汇总文件
+│   └── *_notes.xlsx            # 单博主/单关键词数据
+└── db/                         # SQLite 数据库目录（已忽略）
+    ├── notes_history.db        # 关键词爬取历史
+    └── user_notes_history.db   # 博主爬取历史
 ```
 
 ## 配置文件
